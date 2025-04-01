@@ -1,0 +1,107 @@
+Database
+    • CREATE TABLE urls (
+        url_id SERIAL PRIMARY KEY,
+        long_url TEXT NOT NULL UNIQUE,
+        shortened_url TEXT NOT NULL UNIQUE
+    );
+
+Frontend
+
+    • Building off the copy link work, we want to create a button that says "Copy Tiny Link". Since the url changes every time a filter is changed, 
+        we COULD automatically make an api call every time the url chnages. But I think that will lead to unnecesarry api calls, so lets stick with
+        a manual button click. 
+    • NEW api call: upsertShortenedUrl()
+        export const upsertShortenedUrl = async (originalUrl: string): ShortenedUrl<string> => {
+            const url = [insert api endpoint]/${originalUrl};
+            const request = await fetch(url, {
+                method: 'PUT',
+                credentials: "include",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            });
+            const response = await request.json();
+            return response;
+        };
+
+    • When the button is clicked, grab the current url and send it to the backend via upsertShortenedUrl(), copy the returned shortened url to the user's clipboard
+
+    • NEW api call: getLongUrl()
+        export const getLongUrl = async (shortUrl: string): originalUrl<string> => {
+            const url = [insert api endpoint]/${shortUrl};
+            const request = await fetch(url, {
+                method: 'GET',
+                credentials: "include",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            });
+            const response = await request.json();
+
+            if (response.data.longUrl) {
+                window.location.href = response.data.longUrl;
+            } else {
+                console.error("Long URL not found");
+                navigate("/404");
+            };
+        };
+
+    • When users visit a shortened URL, the server fetches the corresponding original URL from the database and redirects the user to it.
+        needs more thoughts: how does the frontend router know when to fetch the long url and reroute? 
+
+    
+
+Backend
+
+    • If the URL already exists in the database, the existing short key is returned.  If it's new, a unique 
+        short key is generated and saved along with the original URL.
+
+    • NEW api endpoint: upsertShortenedUrl()
+        const upsertUrl = async (longUrl) => {
+            try {
+                // Check if the long URL already exists
+                const selectQuery = `
+                SELECT url_id, shortened_url
+                FROM urls
+                WHERE long_url = $1
+                `;
+                const selectResult = await client.query(selectQuery, [longUrl]);
+
+                if (selectResult.rows.length > 0) {
+                    const { url_id, shortened_url } = selectResult.rows[0];
+
+                return { url_id, shortened_url };
+                } else {
+                // If the URL does not exist, insert a new entry
+                const insertQuery = `
+                    INSERT INTO urls (long_url, shortened_url)
+                    VALUES ($1, $2)
+                    RETURNING url_id, shortened_url
+                `;
+                const shortenedUrl = generateShortenedUrl(longUrl);
+                const insertResult = await client.query(insertQuery, [longUrl, shortenedUrl]);
+
+                const { url_id, shortened_url } = insertResult.rows[0];
+
+                // Commit the transaction
+                await client.query('COMMIT');
+                return { url_id, shortened_url };
+                }
+            } catch (error) {
+                // Rollback the transaction in case of an error
+                await client.query('ROLLBACK');
+                console.error('Error upserting URL:', error);
+                throw error;
+            } finally {
+                client.release();
+            }
+        };
+
+    • need more thoughts: how best to shorten the url? 
+        • copilot gave me a base 64 encoded function:
+            const generateShortenedUrl = (longUrl) => {
+                return Buffer.from(longUrl).toString("base64").slice(0, 8); // Example: Base64-encoded first 8 characters
+            };
+        • you could also just literally use the shortened url id like https://app.coolcompany.com/users?short-search?1
+   
+
